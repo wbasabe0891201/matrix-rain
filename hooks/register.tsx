@@ -17,10 +17,18 @@ const FRAME_MS = 50
 const DOCK_COLUMNS = 44
 const WANTED = 'paneWanted'
 
+// Herramientas con un hook propio; las demás caen por el hook genérico.
+const COVERED = new Set(['Edit', 'Write', 'Bash', 'Read', 'WebFetch', 'WebSearch'])
+const REDRAW_MS = 1000
+const STALL_MS = 1000
+
 const rain = new Rain()
 let view: { columns: number; rows: number } | undefined
 let isBlitting = false
 let isBlank = true
+let timer: { cancel: () => void } | undefined
+let lastTickAt = 0
+let redrawAskedAt = 0
 
 // Lo que alimenta la lluvia nunca debe romper la herramienta ni el turno.
 function safely(fn: () => void): void {
@@ -31,8 +39,30 @@ function safely(fn: () => void): void {
   }
 }
 
+// Un período que el engine rechaza termina el intervalo para siempre: si el
+// reloj dejó de latir, se arranca otro.
+function keepTicking($: EngineInterface): void {
+  if (Date.now() - lastTickAt < STALL_MS) return
+  timer?.cancel()
+  lastTickAt = Date.now()
+  timer = $.clock.every(FRAME_MS, () => frame($))
+}
+
+// Tras un repintado rechazado (panel tapado, tamaño en transición) hace falta
+// un render nuevo para volver a montar el Raster; se pide, como mucho uno por segundo.
+function askRedraw($: EngineInterface): void {
+  if (Date.now() - redrawAskedAt < REDRAW_MS) return
+  redrawAskedAt = Date.now()
+  safely(() => $.ui.invalidate('ui.render'))
+}
+
 function frame($: EngineInterface): void {
-  if (view === undefined || isBlitting) return
+  lastTickAt = Date.now()
+  if (view === undefined) {
+    if (!rain.isIdle) askRedraw($)
+    return
+  }
+  if (isBlitting) return
   if (rain.isIdle && isBlank) return
   rain.step()
   isBlank = rain.isIdle
@@ -40,7 +70,9 @@ function frame($: EngineInterface): void {
   $.ui
     .blit({ requestId: PANE, key: RASTER, cells: rain.cells(), columns: rain.columns, rows: rain.rows })
     .then(blitted => {
-      if (blitted.deny !== undefined) view = undefined
+      if (blitted.deny === undefined) return
+      view = undefined
+      askRedraw($)
     })
     .catch(() => {
       view = undefined
@@ -48,6 +80,26 @@ function frame($: EngineInterface): void {
     .finally(() => {
       isBlitting = false
     })
+}
+
+// Todo lo que entra a la lluvia pasa por aquí, y de paso revive el reloj.
+function feed($: EngineInterface, ...args: Parameters<Rain['feed']>): void {
+  rain.feed(...args)
+  keepTicking($)
+}
+
+// Los campos del sobre de una llamada, que no son lo que la herramienta recibe.
+const ENVELOPE = new Set(['tool', 'tool_use_id', 'consent', 'agentId', 'origin'])
+
+// Las cadenas de un valor cualquiera (entrada o resultado de una herramienta).
+function strings(value: unknown, out: string[] = [], depth = 0): string[] {
+  if (out.length > 200 || depth > 6) return out
+  if (typeof value === 'string') out.push(value)
+  else if (Array.isArray(value)) for (const item of value) strings(item, out, depth + 1)
+  else if (value !== null && typeof value === 'object') {
+    for (const item of Object.values(value)) strings(item, out, depth + 1)
+  }
+  return out
 }
 
 function lastLines(text: string, count: number): string {
@@ -74,7 +126,8 @@ export const register: Register = on => {
       name: 'matrix',
       description: 'Abre o cierra la lluvia de código Matrix',
     })
-    $.clock.every(FRAME_MS, () => frame($))
+    lastTickAt = 0
+    keepTicking($)
     if ((await $.store.get(WANTED)) === true) void openPane($)
 
     return next(e)
@@ -126,7 +179,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     const ran = await next(e)
     if (ran.deny === undefined && ran.isError !== true && !touchesSecrets(e.file_path)) {
-      safely(() => rain.feed(EDIT, mask(addedLines(e.old_string, e.new_string))))
+      safely(() => feed($, EDIT, mask(addedLines(e.old_string, e.new_string))))
     }
 
     return ran
@@ -135,7 +188,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
     const ran = await next(e)
     if (ran.deny === undefined && ran.isError !== true && !touchesSecrets(e.file_path)) {
-      safely(() => rain.feed(EDIT, mask(e.content)))
+      safely(() => feed($, EDIT, mask(e.content)))
     }
 
     return ran
@@ -145,17 +198,17 @@ export const register: Register = on => {
   // en rojo. Cualquier otro comando cuenta como lectura.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const isTest = isTestCommand(e.command)
-    safely(() => rain.feed(isTest ? TEST : READ, mask(e.command)))
+    safely(() => feed($, isTest ? TEST : READ, mask(e.command)))
     const ran = await next(e)
     if (ran.deny !== undefined || touchesSecrets(e.command)) return ran
     safely(() => {
       const out = outputOf(ran.result, ran.text)
       if (!isTest) {
-        rain.feed(READ, mask(lastLines(out, 200)))
+        feed($, READ, mask(lastLines(out, 200)))
         return
       }
-      rain.feed(TEST, mask(lastLines(out, 300)), testTint)
-      if (ran.isError === true) rain.feed(TEST, mask(e.command), 'red')
+      feed($, TEST, mask(lastLines(out, 300)), testTint)
+      if (ran.isError === true) feed($, TEST, mask(e.command), 'red')
     })
 
     return ran
@@ -166,7 +219,7 @@ export const register: Register = on => {
     const ran = await next(e)
     if (ran.deny === undefined && ran.isError !== true && !touchesSecrets(e.file_path)) {
       safely(() => {
-        if (ran.result.type === 'text') rain.feed(READ, mask(ran.result.file.content))
+        if (ran.result.type === 'text') feed($, READ, mask(ran.result.file.content))
       })
     }
 
@@ -174,23 +227,23 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'WebFetch' }, async ($, e, next) => {
-    safely(() => rain.feed(READ, e.url))
+    safely(() => feed($, READ, e.url))
     const ran = await next(e)
     if (ran.deny === undefined && ran.isError !== true) {
-      safely(() => rain.feed(READ, mask(ran.result.result)))
+      safely(() => feed($, READ, mask(ran.result.result)))
     }
 
     return ran
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'WebSearch' }, async ($, e, next) => {
-    safely(() => rain.feed(READ, e.query))
+    safely(() => feed($, READ, e.query))
     const ran = await next(e)
     if (ran.deny === undefined && ran.isError !== true) {
       safely(() => {
         for (const block of ran.result.results) {
-          if (typeof block === 'string') rain.feed(READ, mask(block))
-          else for (const hit of block.content) rain.feed(READ, `${hit.title}\n${hit.url}\n${hit.snippet ?? ''}`)
+          if (typeof block === 'string') feed($, READ, mask(block))
+          else for (const hit of block.content) feed($, READ, `${hit.title}\n${hit.url}\n${hit.snippet ?? ''}`)
         }
       })
     }
@@ -198,9 +251,26 @@ export const register: Register = on => {
     return ran
   }).catch(($, e, next) => next(e))
 
+  // Cualquier otra herramienta (MCP, AskUserQuestion, Skill, Agent, Grep...):
+  // lo que recibe al llamarla y lo que responde.
+  on('tool.call', async ($, e, next) => {
+    const tool = String(e.tool)
+    if (COVERED.has(tool)) return next(e)
+    safely(() => {
+      const input = Object.entries(e).filter(([key]) => !ENVELOPE.has(key))
+      feed($, READ, mask([tool, ...strings(input.map(([, value]) => value))].join('\n')))
+    })
+    const ran = await next(e)
+    if (ran.deny === undefined) {
+      safely(() => feed($, READ, mask(lastLines(strings([ran.result, ran.text]).join('\n'), 120))))
+    }
+
+    return ran
+  }).catch(($, e, next) => next(e))
+
   // El pensamiento y la respuesta del modelo, mientras llegan.
   on('turn.step', async function* ($, e, next) {
-    const lines = new LineSplitter(line => rain.feed(THOUGHT, mask(line)))
+    const lines = new LineSplitter(line => feed($, THOUGHT, mask(line)))
     const stream = next(e)
     for await (const chunk of stream) {
       if (chunk.kind === 'thinking' || chunk.kind === 'text') {
@@ -215,7 +285,7 @@ export const register: Register = on => {
 
   // Lo que pide la persona.
   on('prompt.submit', ($, e, next) => {
-    safely(() => rain.feed(THOUGHT, mask(e.text)))
+    safely(() => feed($, THOUGHT, mask(e.text)))
 
     return next(e)
   }).catch(($, e, next) => next(e))

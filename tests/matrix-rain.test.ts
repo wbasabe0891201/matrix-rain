@@ -114,6 +114,20 @@ test('un .env leído no cae nunca', async ($, on) => {
   await ui.unmount()
 })
 
+test('las herramientas sin hook propio también caen, entrada y respuesta', async ($, on) => {
+  const { clock, frames } = world(on)
+  on('tool.call', () => ({ result: [{ type: 'text', text: 'trinity' }] }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await $.tool.call({ tool: 'mcp__demo__scan', folder: 'zion' })
+  await clock.advance(3000)
+
+  const text = frames.flatMap(lit).map(cell => cell.char).join('')
+  for (const ch of 'zion' + 'trinity') expect(text.includes(ch)).toBe(true)
+  await ui.unmount()
+})
+
 test('fuera de la terminal el panel lo dice en vez de dibujar', async ($, on) => {
   world(on)
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
