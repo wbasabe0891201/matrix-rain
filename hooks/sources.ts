@@ -57,7 +57,7 @@ export function isTestCommand(command: string): boolean {
 // Una línea de salida de un runner de tests que habla de un fallo. Cubre
 // JUnit/Surefire, Gradle, flutter/dart test, Jest/Vitest, pytest, go y cargo.
 const FAILED =
-  /\b(FAIL(ED|URE|S)?|ERROR(S)?|panicked)\b|\[E\]|✗|✕|✘|×|AssertionError|Assertion failed|Expected:|Tests? failed|Some tests failed|\b(Failures|Errors):\s*[1-9]|\b[1-9]\d* (failed|failing)\b/
+  /\b(FAIL(ED|URE|S)?|ERROR(S)?|panicked)\b|^\s*\(fail\)|\[E\]|✗|✕|✘|×|AssertionError|Assertion failed|Expected:|Received:|Tests? failed|Some tests failed|\b(Failures|Errors):\s*[1-9]|\b[1-9]\d* (fail|failed|failing)\b/
 
 const PASSING_SUMMARY = /\b(Failures|Errors):\s*0\b.*\b(Failures|Errors):\s*0\b/
 

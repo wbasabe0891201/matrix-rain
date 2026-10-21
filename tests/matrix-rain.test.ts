@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { mask } from '../hooks/sources.ts'
+import { mask, testTint } from '../hooks/sources.ts'
 
 const PANE = {
   plugin: 'matrix-rain',
@@ -126,6 +126,15 @@ test('las herramientas sin hook propio también caen, entrada y respuesta', asyn
   const text = frames.flatMap(lit).map(cell => cell.char).join('')
   for (const ch of 'zion' + 'trinity') expect(text.includes(ch)).toBe(true)
   await ui.unmount()
+})
+
+test('las líneas de fallo de cada runner se reconocen', async () => {
+  expect(testTint('(fail) la cuchara existe [0.65ms]')).toBe('red')
+  expect(testTint(' 1 pass')).toBe('green')
+  expect(testTint(' 1 fail')).toBe('red')
+  expect(testTint('Tests run: 5, Failures: 0, Errors: 0, Skipped: 0')).toBe('green')
+  expect(testTint('Tests run: 5, Failures: 1, Errors: 0, Skipped: 0')).toBe('red')
+  expect(testTint('[E] student grade test')).toBe('red')
 })
 
 test('fuera de la terminal el panel lo dice en vez de dibujar', async ($, on) => {
