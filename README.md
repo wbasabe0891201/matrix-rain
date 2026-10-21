@@ -4,13 +4,23 @@ A Claude Code mod that opens a pane with Matrix-style digital rain, made from wh
 
 | Priority | Source | Color |
 |---|---|---|
-| 1 | A question Claude asks you, its options, and then your answer | green |
+| 1 | A question Claude asks you, its options, and then your answer; a permission Claude asks for, with the tool and what it wants to run | green; permissions near-white |
 | 2 | Lines Claude adds or changes with `Edit` / `Write` | green |
-| 3 | Test runs (Maven, Gradle, flutter/dart, Jest, Vitest, pytest, go, cargo, bun, `claude plugin test`...) | green, failing lines in **red** |
-| 4 | What Claude reads: files, shell output, `WebFetch`, `WebSearch`, MCP and other tools | green |
-| 5 | Claude's thinking and replies, and your prompts | green |
+| 3 | Test runs (Maven, Gradle, flutter/dart, Jest, Vitest, pytest, go, cargo, bun, `claude plugin test`...) and errors from any tool | green, failing lines and errors in **red** |
+| 4 | What Claude reads: files, shell output, `WebFetch`, `WebSearch`, MCP and other tools, skills it loads | green |
+| 5 | Claude's thinking and replies, slash commands, messages from other sessions or background tasks, and the tokens each turn used | green |
 
-While Claude waits for your answer to a question, a `> █` prompt blinks on the bottom row, like the terminal in the film's "Wake up, Neo..." scene, until you answer.
+On top of that queue:
+
+- **What you type** falls the moment you type it, key by key, in a near-white column that grows with each key and closes after a second and a half of silence.
+- **Subagents** fall in a dimmer green, so you can tell another agent's work from Claude's own.
+- **`git commit` and `git push`** fall brighter, with longer trails.
+
+Events with an effect of their own:
+
+- **Waiting for you:** while a question or a permission waits for your answer, a `> █` prompt blinks on the bottom row, like the terminal in the film's "Wake up, Neo..." scene.
+- **Déjà vu:** when the context is compacted, the rain freezes, flashes, and the last lines fall again, like the black cat that walks by twice.
+- **Interrupt:** when you press Esc mid-turn, the rain freezes for an instant, everything still queued is dropped, and what is on screen collapses.
 
 When nothing is happening, nothing falls: the columns finish, the trails fade out and the pane goes black.
 
@@ -43,6 +53,7 @@ Nothing from `.env` files, shell rc files, `.netrc`/`.npmrc`, `credentials*`, `.
 ## Limits
 
 - Test output arrives when the command finishes. While a test run is in progress, only the command itself falls.
+- A permission waits from Claude Code's "ask" verdict until the call starts or is refused. In auto mode a classifier answers most asks first, so the cursor may blink for a moment with no dialog shown.
 - Glyphs are not mirrored as in the film, since a terminal cannot flip characters.
 
 ## License

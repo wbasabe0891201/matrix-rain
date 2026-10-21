@@ -1,6 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import { EDIT, QUESTION, Rain, READ, TEST, THOUGHT } from './rain.ts'
+import type { Tint } from './rain.ts'
 import {
   addedLines,
   isTestCommand,
@@ -21,6 +22,7 @@ const WANTED = 'paneWanted'
 const COVERED = new Set(['Edit', 'Write', 'Bash', 'Read', 'WebFetch', 'WebSearch', 'AskUserQuestion'])
 const REDRAW_MS = 1000
 const STALL_MS = 1000
+const GIT_MILESTONE = /\bgit\s+(commit|push)\b/
 
 const rain = new Rain()
 let view: { columns: number; rows: number } | undefined
@@ -29,6 +31,15 @@ let isBlank = true
 let timer: { cancel: () => void } | undefined
 let lastTickAt = 0
 let redrawAskedAt = 0
+
+// Lo que espera a la persona: preguntas abiertas y permisos pedidos, por id
+// de la llamada. Mientras haya alguno, el cursor parpadea.
+const questions = new Set<string>()
+const permits = new Set<string>()
+
+function syncWaiting(): void {
+  rain.isWaiting = questions.size > 0 || permits.size > 0
+}
 
 // Lo que alimenta la lluvia nunca debe romper la herramienta ni el turno.
 function safely(fn: () => void): void {
@@ -88,6 +99,11 @@ function feed($: EngineInterface, ...args: Parameters<Rain['feed']>): void {
   keepTicking($)
 }
 
+// Lo que hace un subagente cae en un verde más tenue.
+function tintOf(agentId: string | undefined): Tint {
+  return agentId === undefined ? 'green' : 'dim'
+}
+
 // Los campos del sobre de una llamada, que no son lo que la herramienta recibe.
 const ENVELOPE = new Set(['tool', 'tool_use_id', 'consent', 'agentId', 'origin'])
 
@@ -100,6 +116,10 @@ function strings(value: unknown, out: string[] = [], depth = 0): string[] {
     for (const item of Object.values(value)) strings(item, out, depth + 1)
   }
   return out
+}
+
+function firstLines(text: string, count: number): string {
+  return text.split('\n').slice(0, count).join('\n')
 }
 
 function lastLines(text: string, count: number): string {
@@ -179,7 +199,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     const ran = await next(e)
     if (ran.deny === undefined && ran.isError !== true && !touchesSecrets(e.file_path)) {
-      safely(() => feed($, EDIT, mask(addedLines(e.old_string, e.new_string))))
+      safely(() => feed($, EDIT, mask(addedLines(e.old_string, e.new_string)), tintOf(e.agentId)))
     }
 
     return ran
@@ -188,23 +208,25 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
     const ran = await next(e)
     if (ran.deny === undefined && ran.isError !== true && !touchesSecrets(e.file_path)) {
-      safely(() => feed($, EDIT, mask(e.content)))
+      safely(() => feed($, EDIT, mask(e.content), tintOf(e.agentId)))
     }
 
     return ran
   }).catch(($, e, next) => next(e))
 
   // Tests: el comando mientras corre; al terminar, su salida, con los fallos
-  // en rojo. Cualquier otro comando cuenta como lectura.
+  // en rojo. Un commit o un push brilla. Cualquier otro comando cuenta como
+  // lectura, en rojo si falló.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const isTest = isTestCommand(e.command)
-    safely(() => feed($, isTest ? TEST : READ, mask(e.command)))
+    const tint: Tint = GIT_MILESTONE.test(e.command) ? 'bright' : tintOf(e.agentId)
+    safely(() => feed($, isTest ? TEST : READ, mask(e.command), tint))
     const ran = await next(e)
     if (ran.deny !== undefined || touchesSecrets(e.command)) return ran
     safely(() => {
       const out = outputOf(ran.result, ran.text)
       if (!isTest) {
-        feed($, READ, mask(lastLines(out, 200)))
+        feed($, READ, mask(lastLines(out, 200)), ran.isError === true ? 'red' : tint)
         return
       }
       feed($, TEST, mask(lastLines(out, 300)), testTint)
@@ -219,7 +241,7 @@ export const register: Register = on => {
     const ran = await next(e)
     if (ran.deny === undefined && ran.isError !== true && !touchesSecrets(e.file_path)) {
       safely(() => {
-        if (ran.result.type === 'text') feed($, READ, mask(ran.result.file.content))
+        if (ran.result.type === 'text') feed($, READ, mask(ran.result.file.content), tintOf(e.agentId))
       })
     }
 
@@ -227,23 +249,24 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'WebFetch' }, async ($, e, next) => {
-    safely(() => feed($, READ, e.url))
+    safely(() => feed($, READ, e.url, tintOf(e.agentId)))
     const ran = await next(e)
     if (ran.deny === undefined && ran.isError !== true) {
-      safely(() => feed($, READ, mask(ran.result.result)))
+      safely(() => feed($, READ, mask(ran.result.result), tintOf(e.agentId)))
     }
 
     return ran
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'WebSearch' }, async ($, e, next) => {
-    safely(() => feed($, READ, e.query))
+    const tint = tintOf(e.agentId)
+    safely(() => feed($, READ, e.query, tint))
     const ran = await next(e)
     if (ran.deny === undefined && ran.isError !== true) {
       safely(() => {
         for (const block of ran.result.results) {
-          if (typeof block === 'string') feed($, READ, mask(block))
-          else for (const hit of block.content) feed($, READ, `${hit.title}\n${hit.url}\n${hit.snippet ?? ''}`)
+          if (typeof block === 'string') feed($, READ, mask(block), tint)
+          else for (const hit of block.content) feed($, READ, `${hit.title}\n${hit.url}\n${hit.snippet ?? ''}`, tint)
         }
       })
     }
@@ -254,18 +277,21 @@ export const register: Register = on => {
   // Una pregunta a la persona: caen la pregunta y sus opciones, y un cursor
   // parpadea abajo hasta que responde; entonces cae la respuesta.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    const id = e.tool_use_id
     safely(() => {
       for (const q of e.questions) {
         const options = q.options.flatMap(option => [option.label, option.description ?? ''])
         feed($, QUESTION, mask([q.header, q.question, ...options].join('\n')))
       }
     })
-    rain.isWaiting = true
+    questions.add(id)
+    syncWaiting()
     let ran
     try {
       ran = await next(e)
     } finally {
-      rain.isWaiting = false
+      questions.delete(id)
+      syncWaiting()
     }
     if (ran.deny === undefined && ran.isError !== true) {
       const { answers, response } = ran.result
@@ -274,31 +300,68 @@ export const register: Register = on => {
 
     return ran
   }).catch(($, e, next) => {
-    rain.isWaiting = false
+    questions.delete(e.tool_use_id)
+    syncWaiting()
 
     return next(e)
   })
 
-  // Cualquier otra herramienta (MCP, AskUserQuestion, Skill, Agent, Grep...):
-  // lo que recibe al llamarla y lo que responde.
+  // Un permiso pedido: cae la herramienta con lo que quiere hacer y el cursor
+  // espera, hasta que la llamada arranca o se rechaza.
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    const id = e.tool_use_id
+    if (verdict.decision === 'ask' && id !== undefined && e.tool !== 'AskUserQuestion') {
+      safely(() => feed($, QUESTION, mask([`permiso: ${e.tool}`, ...strings(e.input)].join('\n')), 'bright'))
+      permits.add(id)
+      syncWaiting()
+    }
+
+    return verdict
+  }).catch(($, e, next) => next(e))
+
+  // Cualquier otra herramienta (MCP, Skill, Agent, ToolSearch...): lo que
+  // recibe al llamarla y lo que responde. Y, para todas, los errores en rojo.
   on('tool.call', async ($, e, next) => {
     const tool = String(e.tool)
-    if (COVERED.has(tool)) return next(e)
-    safely(() => {
-      const input = Object.entries(e).filter(([key]) => !ENVELOPE.has(key))
-      feed($, READ, mask([tool, ...strings(input.map(([, value]) => value))].join('\n')))
-    })
-    const ran = await next(e)
-    if (ran.deny === undefined) {
-      safely(() => feed($, READ, mask(lastLines(strings([ran.result, ran.text]).join('\n'), 120))))
+    const id = e.tool_use_id
+    const isCovered = COVERED.has(tool)
+    if (!isCovered) {
+      safely(() => {
+        const input = Object.entries(e).filter(([key]) => !ENVELOPE.has(key))
+        feed($, READ, mask([tool, ...strings(input.map(([, value]) => value))].join('\n')), tintOf(e.agentId))
+      })
+    }
+    permits.delete(id)
+    syncWaiting()
+    let ran
+    try {
+      ran = await next(e)
+    } finally {
+      permits.delete(id)
+      syncWaiting()
+    }
+    const hasFailed = ran.deny !== undefined || ran.isError === true
+    if (hasFailed && tool !== 'Bash') {
+      safely(() => feed($, TEST, mask(lastLines([tool, ...strings([ran.deny, ran.result, ran.text])].join('\n'), 40)), 'red'))
+    } else if (!hasFailed && !isCovered) {
+      safely(() => feed($, READ, mask(lastLines(strings([ran.result, ran.text]).join('\n'), 120)), tintOf(e.agentId)))
     }
 
     return ran
   }).catch(($, e, next) => next(e))
 
+  // Un subagente que arranca: su tarea, en verde tenue.
+  on('agent.spawn', ($, e, next) => {
+    safely(() => feed($, THOUGHT, mask(`${e.subagentType}: ${e.description}\n${firstLines(e.prompt, 40)}`), 'dim'))
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   // El pensamiento y la respuesta del modelo, mientras llegan.
   on('turn.step', async function* ($, e, next) {
-    const lines = new LineSplitter(line => feed($, THOUGHT, mask(line)))
+    const tint = tintOf(e.agentId)
+    const lines = new LineSplitter(line => feed($, THOUGHT, mask(line), tint))
     const stream = next(e)
     for await (const chunk of stream) {
       if (chunk.kind === 'thinking' || chunk.kind === 'text') {
@@ -311,9 +374,64 @@ export const register: Register = on => {
     return await stream.result
   })
 
-  // Lo que pide la persona.
-  on('prompt.submit', ($, e, next) => {
-    safely(() => feed($, THOUGHT, mask(e.text)))
+  // Fin del turno: los tokens que costó caen como último suspiro; si la
+  // persona lo interrumpió, la lluvia se congela y se desploma.
+  on('turn.complete', async ($, e, next) => {
+    const done = await next(e)
+    safely(() => {
+      questions.clear()
+      permits.clear()
+      syncWaiting()
+      if (e.reason === 'aborted') {
+        rain.collapse()
+        keepTicking($)
+      } else if (done.usage !== undefined) {
+        const u = done.usage
+        const read = u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
+        feed($, THOUGHT, `tokens in ${read} out ${u.output_tokens}`, 'dim')
+      }
+    })
+
+    return done
+  }).catch(($, e, next) => next(e))
+
+  // Compactación del contexto: un déjà vu.
+  on('session.compact', ($, e, next) => {
+    safely(() => {
+      rain.dejaVu()
+      keepTicking($)
+    })
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // Lo que la persona escribe, tecla a tecla.
+  on('prompt.edit', ($, e, next) => {
+    if (e.inputText !== '') {
+      safely(() => {
+        rain.type(mask(e.inputText))
+        keepTicking($)
+      })
+    }
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // Comandos de barra, skills y mensajes de otras sesiones o tareas.
+  on('command.run', ($, e, next) => {
+    safely(() => feed($, THOUGHT, mask(`/${e.command} ${e.args}`)))
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('skill.prompt', ($, e, next) => {
+    safely(() => feed($, READ, mask(`skill ${e.skill}\n${firstLines(e.text, 30)}`), 'dim'))
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('session.receive', ($, e, next) => {
+    safely(() => feed($, THOUGHT, mask(e.text), tintOf(e.agentId)))
 
     return next(e)
   }).catch(($, e, next) => next(e))

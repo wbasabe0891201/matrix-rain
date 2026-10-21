@@ -1,6 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
+import { Rain } from '../hooks/rain.ts'
 import { mask, testTint } from '../hooks/sources.ts'
 
 const PANE = {
@@ -179,6 +180,69 @@ test('una pregunta deja un cursor parpadeando hasta la respuesta', async ($, on)
   expect(all.includes('r')).toBe(true)
   expect(lit(frames[frames.length - 1]!).length).toBe(0)
   await ui.unmount()
+})
+
+test('el error de cualquier herramienta cae en rojo', async ($, on) => {
+  const { clock, frames } = world(on)
+  on('tool.call', () => ({ result: 'File does not exist', isError: true }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await $.tool.call({ tool: 'Read', file_path: '/zion/oracle.txt' })
+  await clock.advance(3000)
+
+  expect(frames.flatMap(lit).some(cell => cell.char === 'x' && isRed(cell.fg))).toBe(true)
+  await ui.unmount()
+})
+
+test('una interrupción vacía la cola y la lluvia se desploma', async ($, on) => {
+  const { clock, frames } = world(on)
+  on('tool.call', () => ({ result: {} }))
+  on('turn.complete', () => ({ text: '' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  const content = Array.from({ length: 300 }, (_, i) => `agent smith ${i}`).join('\n')
+  await $.tool.call({ tool: 'Write', file_path: '/zion/smith.txt', content })
+  await clock.advance(500)
+  await $.turn.complete({ turnId: 't1', reason: 'aborted', isAborted: true, answer: '', durationMs: 10 })
+  await clock.advance(3000)
+
+  expect(lit(frames[frames.length - 1]!).length).toBe(0)
+  await ui.unmount()
+})
+
+test('la compactación es un déjà vu: lo último vuelve a caer', async ($, on) => {
+  const { clock, frames } = world(on)
+  on('tool.call', () => ({ result: {} }))
+  on('session.compact', () => ({ skip: 'test' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await $.tool.call({ tool: 'Write', file_path: '/zion/cat.txt', content: 'black cat' })
+  await clock.advance(60_000)
+  const before = frames.length
+  await $.session.compact({ trigger: 'manual', messages: [] })
+  await clock.advance(3000)
+
+  const again = frames.slice(before).flatMap(lit).map(cell => cell.char).join('')
+  for (const ch of 'blackcat') expect(again.includes(ch)).toBe(true)
+  await ui.unmount()
+})
+
+test('lo que se teclea cae en una sola columna que crece con cada tecla', async () => {
+  const rain = new Rain(() => 0)
+  rain.resize(6, 10)
+  rain.type('ne')
+  for (let i = 0; i < 5; i++) rain.step()
+  rain.type('o')
+  for (let i = 0; i < 5; i++) rain.step()
+
+  const column = decode(rain.cells())
+    .filter((_, i) => i % 6 === 0)
+    .map(cell => cell.char)
+    .join('')
+  expect(column.startsWith('neo')).toBe(true)
 })
 
 test('fuera de la terminal el panel lo dice en vez de dibujar', async ($, on) => {
