@@ -1,6 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-import { EDIT, Rain, READ, TEST, THOUGHT } from './rain.ts'
+import { EDIT, QUESTION, Rain, READ, TEST, THOUGHT } from './rain.ts'
 import {
   addedLines,
   isTestCommand,
@@ -18,7 +18,7 @@ const DOCK_COLUMNS = 44
 const WANTED = 'paneWanted'
 
 // Herramientas con un hook propio; las demás caen por el hook genérico.
-const COVERED = new Set(['Edit', 'Write', 'Bash', 'Read', 'WebFetch', 'WebSearch'])
+const COVERED = new Set(['Edit', 'Write', 'Bash', 'Read', 'WebFetch', 'WebSearch', 'AskUserQuestion'])
 const REDRAW_MS = 1000
 const STALL_MS = 1000
 
@@ -250,6 +250,34 @@ export const register: Register = on => {
 
     return ran
   }).catch(($, e, next) => next(e))
+
+  // Una pregunta a la persona: caen la pregunta y sus opciones, y un cursor
+  // parpadea abajo hasta que responde; entonces cae la respuesta.
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    safely(() => {
+      for (const q of e.questions) {
+        const options = q.options.flatMap(option => [option.label, option.description ?? ''])
+        feed($, QUESTION, mask([q.header, q.question, ...options].join('\n')))
+      }
+    })
+    rain.isWaiting = true
+    let ran
+    try {
+      ran = await next(e)
+    } finally {
+      rain.isWaiting = false
+    }
+    if (ran.deny === undefined && ran.isError !== true) {
+      const { answers, response } = ran.result
+      safely(() => feed($, QUESTION, mask(strings([Object.values(answers), response]).join('\n'))))
+    }
+
+    return ran
+  }).catch(($, e, next) => {
+    rain.isWaiting = false
+
+    return next(e)
+  })
 
   // Cualquier otra herramienta (MCP, AskUserQuestion, Skill, Agent, Grep...):
   // lo que recibe al llamarla y lo que responde.

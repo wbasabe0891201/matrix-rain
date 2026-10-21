@@ -137,6 +137,50 @@ test('las líneas de fallo de cada runner se reconocen', async () => {
   expect(testTint('[E] student grade test')).toBe('red')
 })
 
+test('una pregunta deja un cursor parpadeando hasta la respuesta', async ($, on) => {
+  const { clock, frames } = world(on)
+  on('tool.call', async () => {
+    await clock.sleep(4000)
+    return { result: { questions: [], answers: { '¿Pastilla?': 'roja' } } }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  const asked = $.tool.call({
+    tool: 'AskUserQuestion',
+    questions: [
+      {
+        question: '¿Pastilla?',
+        header: 'Elige',
+        multiSelect: false,
+        options: [
+          { label: 'azul', description: 'Despiertas en tu cama' },
+          { label: 'roja', description: 'La madriguera del conejo' },
+        ],
+      },
+    ],
+  })
+  await clock.advance(3000)
+
+  // La última fila del panel: `>` fijo y el bloque que va y viene.
+  const bottom = (frame: Cell[]) => frame.slice((PANE.props.scroll.bodyRows - 1) * PANE.props.bodyColumns)
+  const waiting = frames.slice(-20).map(bottom)
+  expect(waiting.every(row => row[0]!.char === '>')).toBe(true)
+  expect(waiting.some(row => row[2]!.char === '█')).toBe(true)
+  expect(waiting.some(row => row[2]!.char === ' ')).toBe(true)
+  const fell = frames.flatMap(lit).map(cell => cell.char).join('')
+  for (const ch of 'Elige' + 'azul') expect(fell.includes(ch)).toBe(true)
+
+  await clock.advance(2000)
+  await asked
+  await clock.advance(60_000)
+
+  const all = frames.flatMap(lit).map(cell => cell.char).join('')
+  expect(all.includes('r')).toBe(true)
+  expect(lit(frames[frames.length - 1]!).length).toBe(0)
+  await ui.unmount()
+})
+
 test('fuera de la terminal el panel lo dice en vez de dibujar', async ($, on) => {
   world(on)
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })

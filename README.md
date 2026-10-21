@@ -4,10 +4,13 @@ A Claude Code mod that opens a pane with Matrix-style digital rain, made from wh
 
 | Priority | Source | Color |
 |---|---|---|
-| 1 | Lines Claude adds or changes with `Edit` / `Write` | green |
-| 2 | Test runs (Maven, Gradle, flutter/dart, Jest, Vitest, pytest, go, cargo...) | green, failing lines in **red** |
-| 3 | What Claude reads: files, shell output, `WebFetch`, `WebSearch` | green |
-| 4 | Claude's thinking and replies, and your prompts | green |
+| 1 | A question Claude asks you, its options, and then your answer | green |
+| 2 | Lines Claude adds or changes with `Edit` / `Write` | green |
+| 3 | Test runs (Maven, Gradle, flutter/dart, Jest, Vitest, pytest, go, cargo, bun, `claude plugin test`...) | green, failing lines in **red** |
+| 4 | What Claude reads: files, shell output, `WebFetch`, `WebSearch`, MCP and other tools | green |
+| 5 | Claude's thinking and replies, and your prompts | green |
+
+While Claude waits for your answer to a question, a `> █` prompt blinks on the bottom row, like the terminal in the film's "Wake up, Neo..." scene, until you answer.
 
 When nothing is happening, nothing falls: the columns finish, the trails fade out and the pane goes black.
 

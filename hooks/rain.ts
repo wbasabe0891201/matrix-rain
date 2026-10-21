@@ -5,13 +5,20 @@
 export type Tint = 'green' | 'red'
 
 // Prioridad de las fuentes: la lluvia siempre toma primero de la más alta.
-export const EDIT = 0
-export const TEST = 1
-export const READ = 2
-export const THOUGHT = 3
-export type Source = typeof EDIT | typeof TEST | typeof READ | typeof THOUGHT
+export const QUESTION = 0
+export const EDIT = 1
+export const TEST = 2
+export const READ = 3
+export const THOUGHT = 4
+export type Source = typeof QUESTION | typeof EDIT | typeof TEST | typeof READ | typeof THOUGHT
 
-const QUEUE_CAP = [400, 400, 300, 120]
+const QUEUE_CAP = [200, 400, 400, 300, 120]
+
+// El cursor que espera una respuesta: `> █` en la última fila, el bloque
+// parpadeando como el de la terminal de "Wake up, Neo...".
+const PROMPT_COLOR = 0x14f24a
+const CURSOR_COLOR = 0x9dffb0
+const BLINK_FRAMES = 10
 
 type Line = { text: string; tint: Tint }
 
@@ -129,8 +136,11 @@ export class Rain {
   private words = new Uint32Array(0)
   private drops: Drop[] = []
   private busy = new Uint8Array(0)
-  private queues: Line[][] = [[], [], [], []]
+  private queues: Line[][] = [[], [], [], [], []]
   private lit = 0
+  private frames = 0
+  // Mientras es true la lluvia no se apaga: hay una pregunta esperando respuesta.
+  isWaiting = false
 
   constructor(private random: () => number = Math.random) {}
 
@@ -162,13 +172,20 @@ export class Rain {
     if (queue.length > cap) queue.splice(0, queue.length - cap)
   }
 
-  // Sin columnas cayendo, sin estela y sin nada en cola: la pantalla está negra.
+  // Sin columnas cayendo, sin estela, sin nada en cola y sin pregunta abierta:
+  // la pantalla está negra.
   get isIdle(): boolean {
-    return this.drops.length === 0 && this.lit === 0 && this.queues.every(q => q.length === 0)
+    return (
+      !this.isWaiting &&
+      this.drops.length === 0 &&
+      this.lit === 0 &&
+      this.queues.every(q => q.length === 0)
+    )
   }
 
   step(): void {
     if (this.columns === 0 || this.rows === 0) return
+    this.frames++
     this.ageCells()
     this.spawn()
     this.advance()
@@ -190,7 +207,22 @@ export class Rain {
         words[w + 1] = (red[i] ? TRAILS.red : TRAILS.green)[t]!
       }
     }
+    if (this.isWaiting) this.drawCursor()
     return toBase64(new Uint8Array(words.buffer))
+  }
+
+  private drawCursor(): void {
+    if (this.columns < 3) return
+    const isOn = Math.floor(this.frames / BLINK_FRAMES) % 2 === 0
+    const at = (this.rows - 1) * this.columns * 3
+    const put = (col: number, cp: number, fg: number) => {
+      this.words[at + col * 3] = cp
+      this.words[at + col * 3 + 1] = fg
+      this.words[at + col * 3 + 2] = BG
+    }
+    put(0, 0x3e, PROMPT_COLOR)
+    put(1, 0x20, BG)
+    put(2, isOn ? 0x2588 : 0x20, isOn ? CURSOR_COLOR : BG)
   }
 
   private ageCells(): void {
