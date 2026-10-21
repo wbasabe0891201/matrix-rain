@@ -22,6 +22,8 @@ const WANTED = 'paneWanted'
 const COVERED = new Set(['Edit', 'Write', 'Bash', 'Read', 'WebFetch', 'WebSearch', 'AskUserQuestion'])
 const REDRAW_MS = 1000
 const STALL_MS = 1000
+// Una compactación puede dejar más de una fila de resumen: un solo déjà vu.
+const DEJA_VU_MS = 5000
 const GIT_MILESTONE = /\bgit\s+(commit|push)\b/
 
 const rain = new Rain()
@@ -31,6 +33,7 @@ let isBlank = true
 let timer: { cancel: () => void } | undefined
 let lastTickAt = 0
 let redrawAskedAt = 0
+let dejaVuAt = 0
 
 // Lo que espera a la persona: preguntas abiertas y permisos pedidos, por id
 // de la llamada. Mientras haya alguno, el cursor parpadea.
@@ -48,6 +51,16 @@ function safely(fn: () => void): void {
   } catch {
     // Se pierde una línea de lluvia, nada más.
   }
+}
+
+// Compactación: la lluvia se congela, destella y lo último vuelve a caer.
+function dejaVu($: EngineInterface): void {
+  if (Date.now() - dejaVuAt < DEJA_VU_MS) return
+  dejaVuAt = Date.now()
+  safely(() => {
+    rain.dejaVu()
+    keepTicking($)
+  })
 }
 
 // Un período que el engine rechaza termina el intervalo para siempre: si el
@@ -395,12 +408,18 @@ export const register: Register = on => {
     return done
   }).catch(($, e, next) => next(e))
 
-  // Compactación del contexto: un déjà vu.
-  on('session.compact', ($, e, next) => {
-    safely(() => {
-      rain.dejaVu()
-      keepTicking($)
-    })
+  // Compactación del contexto: un déjà vu. Un plugin anterior puede quedarse
+  // con `session.compact` y con la fila del resumen sin pasarlas, así que
+  // `/compact` se escucha también como comando, al terminar. La fila del
+  // resumen queda para las compactaciones automáticas que sí llegan.
+  on('command.run', { command: 'compact' }, async ($, e, next) => {
+    const done = await next(e)
+    dejaVu($)
+    return done
+  }).catch(($, e, next) => next(e))
+
+  on('session.append', { door: 'compaction' }, ($, e, next) => {
+    if (e.agentId === undefined) dejaVu($)
 
     return next(e)
   }).catch(($, e, next) => next(e))

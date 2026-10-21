@@ -215,14 +215,42 @@ test('una interrupción vacía la cola y la lluvia se desploma', async ($, on) =
 test('la compactación es un déjà vu: lo último vuelve a caer', async ($, on) => {
   const { clock, frames } = world(on)
   on('tool.call', () => ({ result: {} }))
-  on('session.compact', () => ({ skip: 'test' }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   await $.tool.call({ tool: 'Write', file_path: '/zion/cat.txt', content: 'black cat' })
   await clock.advance(60_000)
   const before = frames.length
-  await $.session.compact({ trigger: 'manual', messages: [] })
+  // La fila del resumen, que llega aunque otro plugin se quede con `session.compact`.
+  await $.session.append({
+    message: { type: 'user', role: 'user', isMeta: true, content: [{ type: 'text', text: 'resumen' }] },
+    door: 'compaction',
+    origin: { kind: 'engine' } as never,
+    uuid: 'u1',
+  })
+  await clock.advance(3000)
+
+  const again = frames.slice(before).flatMap(lit).map(cell => cell.char).join('')
+  for (const ch of 'blackcat') expect(again.includes(ch)).toBe(true)
+  await ui.unmount()
+})
+
+test('/compact también es un déjà vu, aunque otro plugin se quede con la compactación', async ($, on) => {
+  const { clock, frames } = world(on)
+  on('tool.call', () => ({ result: {} }))
+  on('command.run', { command: 'compact' }, () => ({ text: '' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await $.tool.call({ tool: 'Write', file_path: '/zion/cat.txt', content: 'black cat' })
+  await clock.advance(60_000)
+  const before = frames.length
+  await $.command.run({
+    command: 'compact',
+    args: '',
+    origin: { kind: 'composer' } as never,
+    presentation: { isFullscreen: true, columns: 80 },
+  })
   await clock.advance(3000)
 
   const again = frames.slice(before).flatMap(lit).map(cell => cell.char).join('')

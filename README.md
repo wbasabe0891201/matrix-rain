@@ -19,7 +19,7 @@ On top of that queue:
 Events with an effect of their own:
 
 - **Waiting for you:** while a question or a permission waits for your answer, a `> █` prompt blinks on the bottom row, like the terminal in the film's "Wake up, Neo..." scene.
-- **Déjà vu:** when the context is compacted, the rain freezes, flashes, and the last lines fall again, like the black cat that walks by twice.
+- **Déjà vu:** when you run `/compact`, or the context is compacted on its own, the rain freezes, flashes, and the last lines fall again, like the black cat that walks by twice.
 - **Interrupt:** when you press Esc mid-turn, the rain freezes for an instant, everything still queued is dropped, and what is on screen collapses.
 
 When nothing is happening, nothing falls: the columns finish, the trails fade out and the pane goes black.
@@ -54,6 +54,7 @@ Nothing from `.env` files, shell rc files, `.netrc`/`.npmrc`, `credentials*`, `.
 
 - Test output arrives when the command finishes. While a test run is in progress, only the command itself falls.
 - A permission waits from Claude Code's "ask" verdict until the call starts or is refused. In auto mode a classifier answers most asks first, so the cursor may blink for a moment with no dialog shown.
+- If another plugin handles compaction before this one and does not pass it on, automatic compaction shows no déjà vu. `/compact` still shows it.
 - Glyphs are not mirrored as in the film, since a terminal cannot flip characters.
 
 ## License
