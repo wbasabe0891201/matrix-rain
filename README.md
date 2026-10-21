@@ -1,0 +1,47 @@
+# matrix-rain
+
+A Claude Code mod that opens a pane with Matrix-style digital rain, made from what Claude is doing right now instead of random glyphs:
+
+| Priority | Source | Color |
+|---|---|---|
+| 1 | Lines Claude adds or changes with `Edit` / `Write` | green |
+| 2 | Test runs (Maven, Gradle, flutter/dart, Jest, Vitest, pytest, go, cargo...) | green, failing lines in **red** |
+| 3 | What Claude reads: files, shell output, `WebFetch`, `WebSearch` | green |
+| 4 | Claude's thinking and replies, and your prompts | green |
+
+When nothing is happening, nothing falls: the columns finish, the trails fade out and the pane goes black.
+
+The colors follow the film: a black background, a near-white head on each column, and a trail that fades from mint through `#00FF41` to dark green.
+
+## Install
+
+At the prompt of a Claude Code terminal session:
+
+```
+/plugin install matrix-rain --marketplace wbasabe0891201/matrix-rain
+```
+
+From a shell:
+
+```
+claude plugin install matrix-rain --marketplace wbasabe0891201/matrix-rain
+```
+
+In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `wbasabe0891201/matrix-rain`, then Add plugin. The rain itself only draws in the terminal.
+
+## Use
+
+Type `/matrix` to open or close the pane. If you leave it open, it opens again in your next session. It docks on the right in Claude Code's fullscreen layout. On the main screen (inside tmux, for example) it sits above the prompt.
+
+## Privacy
+
+Nothing from `.env` files, shell rc files, `.netrc`/`.npmrc`, `credentials*`, `.pem`/`.key` files or SSH keys is ever shown. Values that look like keys, tokens or passwords are replaced with `****`. Everything stays on your machine: the mod only draws in your terminal.
+
+## Limits
+
+- Test output arrives when the command finishes. While a test run is in progress, only the command itself falls.
+- Glyphs are not mirrored as in the film, since a terminal cannot flip characters.
+
+## License
+
+MIT
